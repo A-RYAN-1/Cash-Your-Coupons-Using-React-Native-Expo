@@ -1,16 +1,15 @@
-// App.js
 import React, { useState, useEffect } from "react";
-import { View, Text } from "react-native";
 import { NavigationContainer } from "@react-navigation/native";
 import { createStackNavigator } from "@react-navigation/stack";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { Ionicons } from "@expo/vector-icons";
 import { auth } from "./firebase";
-import LoginScreen from "./screens/LoginScreen";
-import SellCouponsScreen from "./screens/SellCouponsScreen";
 import BuyCouponsScreen from "./screens/BuyCouponsScreen";
+import SellCouponsScreen from "./screens/SellCouponsScreen";
 import ExchangeCouponsScreen from "./screens/ExchangeCouponsScreen";
 import ProfileScreen from "./screens/ProfileScreen";
+import LoginScreen from "./screens/LoginScreen";
+import { View, Text, StyleSheet } from "react-native";
 
 const Stack = createStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -18,56 +17,32 @@ const Tab = createBottomTabNavigator();
 const MainTabs = () => (
   <Tab.Navigator
     screenOptions={({ route }) => ({
-      tabBarIcon: ({ color, size }) => {
+      tabBarIcon: ({ focused, color, size }) => {
         let iconName;
-        if (route.name === "Sell") iconName = "pricetag";
-        else if (route.name === "Buy") iconName = "cart";
-        else if (route.name === "Exchange") iconName = "swap-horizontal";
-        else if (route.name === "Profile") iconName = "person";
+        if (route.name === "Buy") iconName = focused ? "cart" : "cart-outline";
+        else if (route.name === "Sell")
+          iconName = focused ? "pricetag" : "pricetag-outline";
+        else if (route.name === "Exchange")
+          iconName = focused ? "swap-horizontal" : "swap-horizontal-outline";
+        else if (route.name === "Profile")
+          iconName = focused ? "person" : "person-outline";
         return <Ionicons name={iconName} size={size} color={color} />;
       },
-      tabBarActiveTintColor: "#007AFF",
-      tabBarInactiveTintColor: "#666",
-      tabBarStyle: { backgroundColor: "#fff", paddingBottom: 5, height: 60 },
-      headerShown: false, // Ensure no header interferes with keyboard
+      tabBarActiveTintColor: "#4F46E5",
+      tabBarInactiveTintColor: "#6B7280",
+      tabBarStyle: styles.tabBar,
+      tabBarLabelStyle: styles.tabBarLabel,
+      headerShown: false,
     })}
   >
-    <Tab.Screen
-      name="Sell"
-      component={SellCouponsScreen}
-      options={{
-        title: "Sell Coupons",
-        keyboardHandlingEnabled: true, // Enable keyboard handling
-      }}
-    />
-    <Tab.Screen
-      name="Buy"
-      component={BuyCouponsScreen}
-      options={{
-        title: "Buy Coupons",
-        keyboardHandlingEnabled: true,
-      }}
-    />
-    <Tab.Screen
-      name="Exchange"
-      component={ExchangeCouponsScreen}
-      options={{
-        title: "Exchange Coupons",
-        keyboardHandlingEnabled: true,
-      }}
-    />
-    <Tab.Screen
-      name="Profile"
-      component={ProfileScreen}
-      options={{
-        title: "Profile",
-        keyboardHandlingEnabled: true,
-      }}
-    />
+    <Tab.Screen name="Buy" component={BuyCouponsScreen} />
+    <Tab.Screen name="Sell" component={SellCouponsScreen} />
+    <Tab.Screen name="Exchange" component={ExchangeCouponsScreen} />
+    <Tab.Screen name="Profile" component={ProfileScreen} />
   </Tab.Navigator>
 );
 
-export default function App() {
+const App = () => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -81,8 +56,8 @@ export default function App() {
 
   if (isLoading) {
     return (
-      <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
-        <Text>Loading...</Text>
+      <View style={styles.loadingContainer}>
+        <Text style={styles.loadingText}>Loading...</Text>
       </View>
     );
   }
@@ -93,6 +68,7 @@ export default function App() {
         initialRouteName={isAuthenticated ? "Main" : "Login"}
         screenOptions={{
           headerShown: false,
+          keyboardHandlingEnabled: true,
           cardStyleInterpolator: ({ current, layouts }) => ({
             cardStyle: {
               transform: [
@@ -105,7 +81,6 @@ export default function App() {
               ],
             },
           }),
-          keyboardHandlingEnabled: true, // Enable keyboard handling at stack level
         }}
       >
         <Stack.Screen name="Login" component={LoginScreen} />
@@ -113,4 +88,39 @@ export default function App() {
       </Stack.Navigator>
     </NavigationContainer>
   );
-}
+};
+
+const styles = StyleSheet.create({
+  loadingContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "#F9FAFB",
+  },
+  loadingText: {
+    fontSize: 18,
+    color: "#6B7280",
+    fontFamily: "System",
+  },
+  tabBar: {
+    backgroundColor: "#FFFFFF",
+    borderTopWidth: 1,
+    borderTopColor: "#E5E7EB",
+    paddingBottom: 8,
+    paddingTop: 8,
+    height: 60,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  tabBarLabel: {
+    fontSize: 12,
+    fontWeight: "600",
+    fontFamily: "System",
+    marginBottom: 4,
+  },
+});
+
+export default App;

@@ -11,7 +11,15 @@ import {
   SectionList,
   TextInput,
 } from "react-native";
-import { collection, getDocs, query, where, addDoc } from "firebase/firestore";
+import {
+  collection,
+  getDocs,
+  query,
+  where,
+  addDoc,
+  doc,
+  runTransaction,
+} from "firebase/firestore";
 import { auth, db } from "../firebase";
 import { Picker } from "@react-native-picker/picker";
 
@@ -20,7 +28,7 @@ const BuyCouponsScreen = () => {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-  const [filter, setFilter] = useState("All"); // Filter state: "All", "Today", "Week", "Month", "Remaining", "Expired"
+  const [filter, setFilter] = useState("All");
 
   const fetchCoupons = useCallback(async () => {
     setRefreshing(true);
@@ -70,19 +78,43 @@ const BuyCouponsScreen = () => {
         return;
       }
 
-      const data = {
-        couponId: coupon.id,
-        couponName: coupon.name,
-        couponValue: coupon.value,
-        buyerId: user.uid,
-        buyerEmail: user.email,
-        sellerId: coupon.userId,
-        sellerEmail: coupon.userEmail,
-        type: "buy",
-        createdAt: new Date(),
-      };
+      await runTransaction(db, async (transaction) => {
+        const couponRef = doc(db, "coupons", coupon.id);
+        const couponDoc = await transaction.get(couponRef);
 
-      await addDoc(collection(db, "transactions"), data);
+        if (!couponDoc.exists()) {
+          throw new Error("Coupon no longer exists.");
+        }
+
+        const couponData = couponDoc.data();
+        if (
+          couponData.expiryDate &&
+          new Date(couponData.expiryDate) <= new Date()
+        ) {
+          throw new Error("This coupon has expired.");
+        }
+
+        const data = {
+          couponId: coupon.id,
+          couponName: couponData.name,
+          couponValue: couponData.value,
+          buyerId: user.uid,
+          buyerEmail: user.email,
+          sellerId: couponData.userId,
+          sellerEmail: couponData.userEmail,
+          type: "buy",
+          createdAt: new Date(),
+        };
+
+        // Use deterministic transaction ID: buyerId_couponId
+        const transactionRef = doc(
+          db,
+          "transactions",
+          `${user.uid}_${coupon.id}`
+        );
+        transaction.set(transactionRef, data);
+        transaction.delete(couponRef);
+      });
 
       Alert.alert(
         "✅ Success",
@@ -91,7 +123,7 @@ const BuyCouponsScreen = () => {
       setCoupons((prev) => prev.filter((c) => c.id !== coupon.id));
     } catch (error) {
       console.error("Error buying coupon:", error.message);
-      Alert.alert("❌ Error", "Could not complete purchase.");
+      Alert.alert("❌ Error", error.message || "Could not complete purchase.");
     }
   }, []);
 
@@ -103,14 +135,12 @@ const BuyCouponsScreen = () => {
 
     let filteredCoupons = coupons;
 
-    // Apply search filter
     if (searchQuery) {
       filteredCoupons = filteredCoupons.filter((coupon) =>
         coupon.name.toLowerCase().includes(searchQuery.toLowerCase())
       );
     }
 
-    // Apply category filter
     const sections = [
       {
         title: "Expiring Today",
@@ -154,7 +184,6 @@ const BuyCouponsScreen = () => {
       },
     ];
 
-    // If filter is not "All", return only the selected section
     if (filter !== "All") {
       const filteredSection = sections.find(
         (section) => section.title === filter
@@ -162,7 +191,6 @@ const BuyCouponsScreen = () => {
       return filteredSection ? [filteredSection] : [];
     }
 
-    // Filter out empty sections for "All" view
     return sections.filter((section) => section.data.length > 0);
   }, [coupons, searchQuery, filter]);
 
@@ -170,7 +198,10 @@ const BuyCouponsScreen = () => {
     ({ item }) => {
       const isExpiringSoon =
         item.expiryDate &&
-        new Date(item.expiryDate) - new Date() < 7 * 24 * 60 * 60 * 1000;
+        new Date(item.expiryDate) - new Date() < 7 * 24 * 60 * 60 * 1000 &&
+        new Date(item.expiryDate) > new Date();
+      const isExpired =
+        item.expiryDate && new Date(item.expiryDate) <= new Date();
 
       return (
         <View style={[styles.card, isExpiringSoon && styles.expiringCard]}>
@@ -186,13 +217,16 @@ const BuyCouponsScreen = () => {
                 ? new Date(item.expiryDate).toLocaleDateString()
                 : "N/A"}
             </Text>
+            {isExpired && (
+              <Text style={styles.expiredText}>⚠️ This coupon has expired</Text>
+            )}
           </View>
           <TouchableOpacity
-            style={styles.buyButton}
-            onPress={() => handleBuyCoupon(item)}
-            disabled={!item.name || !item.value}
+            style={[styles.buyButton, isExpired && styles.disabledButton]}
+            onPress={() => !isExpired && handleBuyCoupon(item)}
+            disabled={isExpired || !item.name || !item.value}
           >
-            <Text style={styles.buyText}>Buy</Text>
+            <Text style={styles.buyText}>{isExpired ? "Expired" : "Buy"}</Text>
           </TouchableOpacity>
         </View>
       );
@@ -225,7 +259,6 @@ const BuyCouponsScreen = () => {
         <Text style={styles.headerText}>Buy Coupons</Text>
       </View>
 
-      {/* Search and Filter Section */}
       <View style={styles.filterContainer}>
         <TextInput
           style={styles.searchInput}
@@ -282,85 +315,103 @@ const styles = StyleSheet.create({
   },
   header: {
     padding: 16,
-    backgroundColor: "#6a5acd",
+    backgroundColor: "#4F46E5",
     shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 3,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
+    elevation: 5,
   },
   headerText: {
-    fontSize: 24,
-    fontWeight: "bold",
-    color: "#fff",
+    fontSize: 26,
+    fontWeight: "700",
+    color: "#FFFFFF",
     textAlign: "center",
+    fontFamily: "System",
   },
   loadingContainer: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
-    backgroundColor: "#F3F4F6",
+    backgroundColor: "#F9FAFB",
   },
   loadingText: {
-    marginTop: 10,
+    marginTop: 12,
     fontSize: 16,
     color: "#6B7280",
+    fontFamily: "System",
   },
   card: {
     backgroundColor: "#FFFFFF",
-    borderRadius: 12,
+    borderRadius: 16,
     padding: 16,
-    margin: 20,
-    marginBottom: 14,
+    marginHorizontal: 16,
+    marginVertical: 8,
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    shadowColor: "#000000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 3,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
     elevation: 3,
   },
   expiringCard: {
     borderColor: "#F87171",
-    borderWidth: 1.5,
-    backgroundColor: "#FFF1F2",
+    borderWidth: 2,
+    backgroundColor: "#FFF5F5",
   },
   cardLeft: {
     flex: 1,
-    marginRight: 10,
+    marginRight: 12,
   },
   cardTitle: {
     fontSize: 18,
     fontWeight: "600",
     color: "#1F2937",
-    marginBottom: 4,
+    marginBottom: 6,
+    fontFamily: "System",
   },
   cardDetail: {
     fontSize: 14,
-    color: "#4B5563",
-    marginTop: 2,
+    color: "#6B7280",
+    marginTop: 4,
+    fontFamily: "System",
+  },
+  expiredText: {
+    fontSize: 14,
+    color: "#EF4444",
+    fontWeight: "600",
+    marginTop: 6,
+    fontFamily: "System",
   },
   buyButton: {
     backgroundColor: "#4F46E5",
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 12,
+    alignItems: "center",
+  },
+  disabledButton: {
+    backgroundColor: "#9CA3AF",
+    opacity: 0.7,
   },
   buyText: {
     color: "#FFFFFF",
     fontWeight: "600",
-    fontSize: 14,
+    fontSize: 15,
+    fontFamily: "System",
   },
   emptyState: {
     textAlign: "center",
     fontSize: 16,
-    color: "#9CA3AF",
-    marginTop: 40,
+    color: "#6B7280",
+    marginTop: 48,
+    fontFamily: "System",
   },
   sectionHeader: {
     backgroundColor: "#E5E7EB",
-    padding: 10,
+    padding: 12,
     borderBottomWidth: 1,
     borderBottomColor: "#D1D5DB",
   },
@@ -368,31 +419,35 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: "600",
     color: "#1F2937",
+    fontFamily: "System",
   },
   filterContainer: {
-    padding: 20,
-    backgroundColor: "#fff",
+    padding: 16,
+    backgroundColor: "#FFFFFF",
     borderBottomWidth: 1,
     borderBottomColor: "#E5E7EB",
   },
   searchInput: {
-    backgroundColor: "#F9FAFB",
-    borderRadius: 10,
-    padding: 12,
+    backgroundColor: "#F3F4F6",
+    borderRadius: 12,
+    padding: 14,
     borderWidth: 1,
-    borderColor: "#E5E7EB",
+    borderColor: "#D1D5DB",
     fontSize: 16,
-    color: "#111827",
-    marginBottom: 15,
+    color: "#1F2937",
+    marginBottom: 12,
+    fontFamily: "System",
   },
   pickerContainer: {
     borderWidth: 1,
-    borderColor: "#E5E7EB",
-    borderRadius: 10,
-    backgroundColor: "#fff",
+    borderColor: "#D1D5DB",
+    borderRadius: 12,
+    backgroundColor: "#FFFFFF",
+    overflow: "hidden",
   },
   picker: {
-    height: 50,
+    height: 48,
+    fontFamily: "System",
   },
 });
 
