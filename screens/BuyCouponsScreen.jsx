@@ -19,6 +19,7 @@ import {
   addDoc,
   doc,
   runTransaction,
+  Timestamp,
 } from "firebase/firestore";
 import { auth, db } from "../firebase";
 import { Picker } from "@react-native-picker/picker";
@@ -52,9 +53,21 @@ const BuyCouponsScreen = () => {
         ...doc.data(),
       }));
 
-      const sorted = fetched.sort(
-        (a, b) => new Date(a.expiryDate) - new Date(b.expiryDate)
-      );
+      const sorted = fetched.sort((a, b) => {
+        const dateA =
+          a.expiryDate instanceof Timestamp
+            ? a.expiryDate.toDate()
+            : a.expiryDate
+            ? new Date(a.expiryDate)
+            : new Date(0);
+        const dateB =
+          b.expiryDate instanceof Timestamp
+            ? b.expiryDate.toDate()
+            : b.expiryDate
+            ? new Date(b.expiryDate)
+            : new Date(0);
+        return dateA - dateB;
+      });
 
       setCoupons(sorted);
     } catch (error) {
@@ -87,38 +100,41 @@ const BuyCouponsScreen = () => {
         }
 
         const couponData = couponDoc.data();
-        if (
-          couponData.expiryDate &&
-          new Date(couponData.expiryDate) <= new Date()
-        ) {
+        const expiryDate =
+          couponData.expiryDate instanceof Timestamp
+            ? couponData.expiryDate.toDate()
+            : new Date(couponData.expiryDate);
+        if (expiryDate <= new Date()) {
           throw new Error("This coupon has expired.");
         }
 
         const data = {
           couponId: coupon.id,
-          couponName: couponData.name,
-          couponValue: couponData.value,
+          couponName: couponData.name || "Unnamed",
+          couponValue: parseFloat(couponData.value) || 500,
           buyerId: user.uid,
           buyerEmail: user.email,
-          sellerId: couponData.userId,
-          sellerEmail: couponData.userEmail,
+          sellerId: couponData.userId || "unknown",
+          sellerEmail: couponData.userEmail || "unknown@email.com",
           type: "buy",
           createdAt: new Date(),
         };
 
-        // Use deterministic transaction ID: buyerId_couponId
+        console.log("Transaction data:", data);
         const transactionRef = doc(
           db,
           "transactions",
           `${user.uid}_${coupon.id}`
         );
-        transaction.set(transactionRef, data);
-        transaction.delete(couponRef);
+        await transaction.set(transactionRef, data, { merge: true });
+        console.log("Coupon to delete:", coupon.id);
+        console.log("Coupon data before delete:", couponData); // Debug log
+        await transaction.delete(couponRef);
       });
 
       Alert.alert(
         "✅ Success",
-        `You bought 🎟️ ${coupon.name} for ₹${coupon.value}`
+        `You bought 🎟️ ${coupon.name} for ₹${coupon.value || 500}`
       );
       setCoupons((prev) => prev.filter((c) => c.id !== coupon.id));
     } catch (error) {
@@ -145,40 +161,50 @@ const BuyCouponsScreen = () => {
       {
         title: "Expiring Today",
         data: filteredCoupons.filter((coupon) => {
-          if (!coupon.expiryDate) return false;
-          const expiry = new Date(coupon.expiryDate);
+          const expiry =
+            coupon.expiryDate instanceof Timestamp
+              ? coupon.expiryDate.toDate()
+              : new Date(coupon.expiryDate);
           return expiry.toDateString() === today.toDateString();
         }),
       },
       {
         title: "Expiring Within a Week",
         data: filteredCoupons.filter((coupon) => {
-          if (!coupon.expiryDate) return false;
-          const expiry = new Date(coupon.expiryDate);
+          const expiry =
+            coupon.expiryDate instanceof Timestamp
+              ? coupon.expiryDate.toDate()
+              : new Date(coupon.expiryDate);
           return expiry > today && expiry <= oneWeek;
         }),
       },
       {
         title: "Expiring Within a Month",
         data: filteredCoupons.filter((coupon) => {
-          if (!coupon.expiryDate) return false;
-          const expiry = new Date(coupon.expiryDate);
+          const expiry =
+            coupon.expiryDate instanceof Timestamp
+              ? coupon.expiryDate.toDate()
+              : new Date(coupon.expiryDate);
           return expiry > oneWeek && expiry <= oneMonth;
         }),
       },
       {
         title: "Remaining Coupons",
         data: filteredCoupons.filter((coupon) => {
-          if (!coupon.expiryDate) return false;
-          const expiry = new Date(coupon.expiryDate);
+          const expiry =
+            coupon.expiryDate instanceof Timestamp
+              ? coupon.expiryDate.toDate()
+              : new Date(coupon.expiryDate);
           return expiry > oneMonth;
         }),
       },
       {
         title: "Expired Coupons",
         data: filteredCoupons.filter((coupon) => {
-          if (!coupon.expiryDate) return false;
-          const expiry = new Date(coupon.expiryDate);
+          const expiry =
+            coupon.expiryDate instanceof Timestamp
+              ? coupon.expiryDate.toDate()
+              : new Date(coupon.expiryDate);
           return expiry < today;
         }),
       },
@@ -196,12 +222,14 @@ const BuyCouponsScreen = () => {
 
   const renderCouponItem = useCallback(
     ({ item }) => {
+      const expiryDate =
+        item.expiryDate instanceof Timestamp
+          ? item.expiryDate.toDate()
+          : new Date(item.expiryDate);
       const isExpiringSoon =
-        item.expiryDate &&
-        new Date(item.expiryDate) - new Date() < 7 * 24 * 60 * 60 * 1000 &&
-        new Date(item.expiryDate) > new Date();
-      const isExpired =
-        item.expiryDate && new Date(item.expiryDate) <= new Date();
+        expiryDate - new Date() < 7 * 24 * 60 * 60 * 1000 &&
+        expiryDate > new Date();
+      const isExpired = expiryDate <= new Date();
 
       return (
         <View style={[styles.card, isExpiringSoon && styles.expiringCard]}>
@@ -212,10 +240,7 @@ const BuyCouponsScreen = () => {
               📝 {item.details || "No details"}
             </Text>
             <Text style={styles.cardDetail}>
-              ⏳{" "}
-              {item.expiryDate
-                ? new Date(item.expiryDate).toLocaleDateString()
-                : "N/A"}
+              ⏳ {expiryDate.toLocaleDateString()}
             </Text>
             {isExpired && (
               <Text style={styles.expiredText}>⚠️ This coupon has expired</Text>
@@ -309,10 +334,7 @@ const BuyCouponsScreen = () => {
 };
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#F9FAFB",
-  },
+  container: { flex: 1, backgroundColor: "#F9FAFB" },
   header: {
     padding: 16,
     backgroundColor: "#4F46E5",
@@ -361,10 +383,7 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     backgroundColor: "#FFF5F5",
   },
-  cardLeft: {
-    flex: 1,
-    marginRight: 12,
-  },
+  cardLeft: { flex: 1, marginRight: 12 },
   cardTitle: {
     fontSize: 18,
     fontWeight: "600",
@@ -392,10 +411,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     alignItems: "center",
   },
-  disabledButton: {
-    backgroundColor: "#9CA3AF",
-    opacity: 0.7,
-  },
+  disabledButton: { backgroundColor: "#9CA3AF", opacity: 0.7 },
   buyText: {
     color: "#FFFFFF",
     fontWeight: "600",
@@ -445,10 +461,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#FFFFFF",
     overflow: "hidden",
   },
-  picker: {
-    height: 48,
-    fontFamily: "System",
-  },
+  picker: { height: 48, fontFamily: "System" },
 });
 
 export default BuyCouponsScreen;
